@@ -72,6 +72,11 @@ func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
 func (bh *blobHandler) DeleteBlob(w http.ResponseWriter, r *http.Request) {
 	context.GetLogger(bh).Debug("DeleteBlob")
 
+	if bh.Context.App.maintenanceMode {
+		bh.Errors = append(bh.Errors, v2.ErrorCodeMaintenanceMode)
+		return
+	}
+
 	blobs := bh.Repository.Blobs(bh)
 	err := blobs.Delete(bh, bh.Digest)
 	if err != nil {

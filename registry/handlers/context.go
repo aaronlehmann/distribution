@@ -74,6 +74,10 @@ func getUploadUUID(ctx context.Context) (uuid string) {
 	return ctxu.GetStringValue(ctx, "vars.uuid")
 }
 
+func getMaintenanceModeAction(ctx context.Context) (uuid string) {
+	return ctxu.GetStringValue(ctx, "vars.action")
+}
+
 // getUserName attempts to resolve a username from the context and request. If
 // a username cannot be resolved, the empty string is returned.
 func getUserName(ctx context.Context, r *http.Request) string {

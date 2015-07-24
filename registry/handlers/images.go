@@ -106,6 +106,12 @@ func etagMatch(r *http.Request, etag string) bool {
 // PutImageManifest validates and stores and image in the registry.
 func (imh *imageManifestHandler) PutImageManifest(w http.ResponseWriter, r *http.Request) {
 	ctxu.GetLogger(imh).Debug("PutImageManifest")
+
+	if imh.Context.App.maintenanceMode {
+		imh.Errors = append(imh.Errors, v2.ErrorCodeMaintenanceMode)
+		return
+	}
+
 	manifests, err := imh.Repository.Manifests(imh)
 	if err != nil {
 		imh.Errors = append(imh.Errors, err)
@@ -189,6 +195,11 @@ func (imh *imageManifestHandler) PutImageManifest(w http.ResponseWriter, r *http
 // DeleteImageManifest removes the manifest with the given digest from the registry.
 func (imh *imageManifestHandler) DeleteImageManifest(w http.ResponseWriter, r *http.Request) {
 	ctxu.GetLogger(imh).Debug("DeleteImageManifest")
+
+	if imh.Context.App.maintenanceMode {
+		imh.Errors = append(imh.Errors, v2.ErrorCodeMaintenanceMode)
+		return
+	}
 
 	manifests, err := imh.Repository.Manifests(imh)
 	if err != nil {

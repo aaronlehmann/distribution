@@ -32,6 +32,14 @@ var (
 		Description: "A uuid identifying the upload. This field can accept characters that match `[a-zA-Z0-9-_.=]+`.",
 	}
 
+	onOffParameterDescriptor = ParameterDescriptor{
+		Name:        "action",
+		Type:        "string",
+		Format:      "(on|off)",
+		Required:    true,
+		Description: `String containing either on or off.`,
+	}
+
 	digestPathParameter = ParameterDescriptor{
 		Name:        "digest",
 		Type:        "path",
@@ -134,6 +142,27 @@ var (
 
 	unauthorizedResponsePush = ResponseDescriptor{
 		Description: "The client does not have access to push to the repository.",
+		StatusCode:  http.StatusUnauthorized,
+		Headers: []ParameterDescriptor{
+			authChallengeHeader,
+			{
+				Name:        "Content-Length",
+				Type:        "integer",
+				Description: "Length of the JSON error response body.",
+				Format:      "<length>",
+			},
+		},
+		ErrorCodes: []errcode.ErrorCode{
+			ErrorCodeUnauthorized,
+		},
+		Body: BodyDescriptor{
+			ContentType: "application/json; charset=utf-8",
+			Format:      unauthorizedErrorsBody,
+		},
+	}
+
+	unauthorizedResponseAdmin = ResponseDescriptor{
+		Description: "The client does not have access to administrative endpoints.",
 		StatusCode:  http.StatusUnauthorized,
 		Headers: []ParameterDescriptor{
 			authChallengeHeader,
@@ -1468,6 +1497,46 @@ var routeDescriptors = []RouteDescriptor{
 									linkHeader,
 								},
 							},
+						},
+					},
+				},
+			},
+		},
+	},
+
+	{
+		Name:        RouteNameMaintenanceMode,
+		Path:        "/admin/maintenance/{action:(on|off)}",
+		Entity:      "Turn maintenance mode on or off",
+		Description: "Put the registry into, or take it out of, read-only maintenance mode. While in maintenance mode, uploads are not accepted.",
+		Methods: []MethodDescriptor{
+			{
+				Method:      "POST",
+				Description: "Turn maintenance mode on or off, depending whether the path ends with /on or /off. The request does not need a body.",
+				Requests: []RequestDescriptor{
+					{
+						Name:        "Turn maintenance mode on or off",
+						Description: "Turn maintenance mode on or off, depending whether the path ends with /on or /off. The request does not need a body.",
+						Headers: []ParameterDescriptor{
+							hostHeader,
+							authHeader,
+							{
+								Name:   "Content-Length",
+								Type:   "integer",
+								Format: "0",
+							},
+						},
+						PathParameters: []ParameterDescriptor{
+							onOffParameterDescriptor,
+						},
+						Successes: []ResponseDescriptor{
+							{
+								Description: "Maintenance mode has been switched on or off, as requested.",
+								StatusCode:  http.StatusOK,
+							},
+						},
+						Failures: []ResponseDescriptor{
+							unauthorizedResponseAdmin,
 						},
 					},
 				},

@@ -116,6 +116,11 @@ type blobUploadHandler struct {
 // StartBlobUpload begins the blob upload process and allocates a server-side
 // blob writer session.
 func (buh *blobUploadHandler) StartBlobUpload(w http.ResponseWriter, r *http.Request) {
+	if buh.Context.App.maintenanceMode {
+		buh.Errors = append(buh.Errors, v2.ErrorCodeMaintenanceMode)
+		return
+	}
+
 	blobs := buh.Repository.Blobs(buh)
 	upload, err := blobs.Create(buh)
 	if err != nil {
@@ -156,6 +161,11 @@ func (buh *blobUploadHandler) GetUploadStatus(w http.ResponseWriter, r *http.Req
 
 // PatchBlobData writes data to an upload.
 func (buh *blobUploadHandler) PatchBlobData(w http.ResponseWriter, r *http.Request) {
+	if buh.Context.App.maintenanceMode {
+		buh.Errors = append(buh.Errors, v2.ErrorCodeMaintenanceMode)
+		return
+	}
+
 	if buh.Upload == nil {
 		buh.Errors = append(buh.Errors, v2.ErrorCodeBlobUploadUnknown)
 		return
@@ -191,6 +201,11 @@ func (buh *blobUploadHandler) PatchBlobData(w http.ResponseWriter, r *http.Reque
 // into the blob store and 201 Created is returned with the canonical
 // url of the blob.
 func (buh *blobUploadHandler) PutBlobUploadComplete(w http.ResponseWriter, r *http.Request) {
+	if buh.Context.App.maintenanceMode {
+		buh.Errors = append(buh.Errors, v2.ErrorCodeMaintenanceMode)
+		return
+	}
+
 	if buh.Upload == nil {
 		buh.Errors = append(buh.Errors, v2.ErrorCodeBlobUploadUnknown)
 		return
@@ -265,6 +280,11 @@ func (buh *blobUploadHandler) PutBlobUploadComplete(w http.ResponseWriter, r *ht
 
 // CancelBlobUpload cancels an in-progress upload of a blob.
 func (buh *blobUploadHandler) CancelBlobUpload(w http.ResponseWriter, r *http.Request) {
+	if buh.Context.App.maintenanceMode {
+		buh.Errors = append(buh.Errors, v2.ErrorCodeMaintenanceMode)
+		return
+	}
+
 	if buh.Upload == nil {
 		buh.Errors = append(buh.Errors, v2.ErrorCodeBlobUploadUnknown)
 		return

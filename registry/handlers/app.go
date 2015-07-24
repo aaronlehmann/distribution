@@ -50,6 +50,10 @@ type App struct {
 	}
 
 	redis *redis.Pool
+
+	// maintenanceMode is true when the app is in read-only mode for
+	// maintenance
+	maintenanceMode bool
 }
 
 // NewApp takes a configuration and returns a configured app, ready to serve
@@ -74,6 +78,7 @@ func NewApp(ctx context.Context, configuration configuration.Configuration) *App
 	app.register(v2.RouteNameBlob, blobDispatcher)
 	app.register(v2.RouteNameBlobUpload, blobUploadDispatcher)
 	app.register(v2.RouteNameBlobUploadChunk, blobUploadDispatcher)
+	app.register(v2.RouteNameMaintenanceMode, maintenanceModeDispatcher)
 
 	var err error
 	app.driver, err = factory.Create(configuration.Storage.Type(), configuration.Storage.Parameters())
@@ -510,7 +515,13 @@ func (app *App) authorized(w http.ResponseWriter, r *http.Request, context *Cont
 			}
 			return fmt.Errorf("forbidden: no repository name")
 		}
-		accessRecords = appendCatalogAccessRecord(accessRecords, r)
+
+		switch mux.CurrentRoute(r).GetName() {
+		case v2.RouteNameCatalog:
+			accessRecords = appendCatalogAccessRecord(accessRecords)
+		case v2.RouteNameMaintenanceMode:
+			accessRecords = appendAdminAccessRecord(accessRecords)
+		}
 	}
 
 	ctx, err := app.accessController.Authorized(context.Context, accessRecords...)
@@ -607,23 +618,36 @@ func appendAccessRecords(records []auth.Access, method string, repo string) []au
 	return records
 }
 
-// Add the access record for the catalog if it's our current route
-func appendCatalogAccessRecord(accessRecords []auth.Access, r *http.Request) []auth.Access {
-	route := mux.CurrentRoute(r)
-	routeName := route.GetName()
-
-	if routeName == v2.RouteNameCatalog {
-		resource := auth.Resource{
-			Type: "registry",
-			Name: "catalog",
-		}
-
-		accessRecords = append(accessRecords,
-			auth.Access{
-				Resource: resource,
-				Action:   "*",
-			})
+// Add the access record for the catalog
+func appendCatalogAccessRecord(accessRecords []auth.Access) []auth.Access {
+	resource := auth.Resource{
+		Type: "registry",
+		Name: "catalog",
 	}
+
+	accessRecords = append(accessRecords,
+		auth.Access{
+			Resource: resource,
+			Action:   "*",
+		})
+
+	return accessRecords
+}
+
+// Add the access record for an administrative endpoint
+func appendAdminAccessRecord(accessRecords []auth.Access) []auth.Access {
+	resource := auth.Resource{
+		Type: "registry",
+		Name: "administration",
+	}
+
+	// The action "*" means full admin access is required
+	accessRecords = append(accessRecords,
+		auth.Access{
+			Resource: resource,
+			Action:   "*",
+		})
+
 	return accessRecords
 }
 
