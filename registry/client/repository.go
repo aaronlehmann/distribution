@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -14,8 +15,6 @@ import (
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/context"
 	"github.com/docker/distribution/digest"
-	"github.com/docker/distribution/manifest/schema1"
-	"github.com/docker/distribution/reference"
 	"github.com/docker/distribution/registry/api/v2"
 	"github.com/docker/distribution/registry/client/transport"
 	"github.com/docker/distribution/registry/storage/cache"
@@ -99,10 +98,6 @@ func (r *registry) Repositories(ctx context.Context, entries []string, last stri
 
 // NewRepository creates a new Repository for the given repository name and base URL.
 func NewRepository(ctx context.Context, name, baseURL string, transport http.RoundTripper) (distribution.Repository, error) {
-	if _, err := reference.ParseNamed(name); err != nil {
-		return nil, err
-	}
-
 	ub, err := v2.NewURLBuilderFromString(baseURL)
 	if err != nil {
 		return nil, err
@@ -163,16 +158,139 @@ func (r *repository) Signatures() distribution.SignatureService {
 	}
 }
 
+func (r *repository) Tags(ctx context.Context) distribution.TagService {
+	return &tags{
+		client:  r.client,
+		ub:      r.ub,
+		context: r.context,
+		name:    r.Name(),
+	}
+}
+
+// tags implements remote tagging operations.
+type tags struct {
+	client  *http.Client
+	ub      *v2.URLBuilder
+	context context.Context
+	name    string
+}
+
+func (t *tags) Enumerate(ctx context.Context, refs []string, last string) (n int, err error) {
+	u, err := t.ub.BuildTagsURL(t.name)
+	if err != nil {
+		return 0, err
+	}
+
+	resp, err := t.client.Get(u)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if SuccessStatus(resp.StatusCode) {
+		b, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return 0, err
+		}
+
+		tagsResponse := struct {
+			Tags []string `json:"tags"`
+		}{}
+		if err := json.Unmarshal(b, &tagsResponse); err != nil {
+			return 0, err
+		}
+
+		copy(refs, tagsResponse.Tags)
+		if len(tagsResponse.Tags) > len(refs) {
+			// passed in refs was insufficient to capture all tags
+			return len(refs), nil
+		}
+		return len(tagsResponse.Tags), io.EOF
+	}
+	return 0, handleErrorResponse(resp)
+}
+
+func descriptorFromHeaders(headers http.Header) (distribution.Descriptor, error) {
+	desc := distribution.Descriptor{}
+
+	digestHeader := headers.Get("Docker-Content-Digest")
+	if digestHeader == "" {
+		return distribution.Descriptor{}, errors.New("missing or empty Docker-Content-Digest header")
+	}
+	dgst, err := digest.ParseDigest(digestHeader)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+	desc.Digest = dgst
+
+	lengthHeader := headers.Get("Content-Length")
+	if lengthHeader == "" {
+		return distribution.Descriptor{}, errors.New("missing or empty Content-Length header")
+	}
+	length, err := strconv.ParseInt(lengthHeader, 10, 64)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+	desc.Size = length
+
+	ctHeader := headers.Get("Content-Type")
+	if ctHeader == "" {
+		return distribution.Descriptor{}, errors.New("missing or empty Content=Type header")
+	}
+	desc.MediaType = ctHeader
+	return desc, nil
+
+}
+
+// Get issues a HEAD request for a Manifest against its named endpoint in order
+// to construct a descriptor for the tag.  If the registry doesn't support HEADing
+// a manifest, fallback to GET.
+func (t *tags) Get(ctx context.Context, tag string) (distribution.Descriptor, error) {
+	u, err := t.ub.BuildManifestURL(t.name, tag)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+	var attempts int
+	resp, err := t.client.Head(u)
+
+check:
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 400:
+		return descriptorFromHeaders(resp.Header)
+	case resp.StatusCode == http.StatusMethodNotAllowed:
+		resp, err = t.client.Get(u)
+		attempts++
+		if attempts > 1 {
+			return distribution.Descriptor{}, err
+		}
+		goto check
+	default:
+		return distribution.Descriptor{}, handleErrorResponse(resp)
+	}
+}
+
+func (t *tags) Lookup(ctx context.Context, digest distribution.Descriptor) ([]string, error) {
+	panic("not implemented")
+}
+
+func (t *tags) Tag(ctx context.Context, tag string, desc distribution.Descriptor) error {
+	panic("not implemented")
+}
+
+func (t *tags) Untag(ctx context.Context, tag string) error {
+	panic("not implemented")
+}
+
 type signatures struct {
 	manifests distribution.ManifestService
 }
 
 func (s *signatures) Get(dgst digest.Digest) ([][]byte, error) {
-	m, err := s.manifests.Get(dgst)
-	if err != nil {
-		return nil, err
-	}
-	return m.Signatures()
+	panic("not implemented")
 }
 
 func (s *signatures) Put(dgst digest.Digest, signatures ...[]byte) error {
@@ -186,44 +304,10 @@ type manifests struct {
 	etags  map[string]string
 }
 
-func (ms *manifests) Tags() ([]string, error) {
-	u, err := ms.ub.BuildTagsURL(ms.name)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := ms.client.Get(u)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if SuccessStatus(resp.StatusCode) {
-		b, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-
-		tagsResponse := struct {
-			Tags []string `json:"tags"`
-		}{}
-		if err := json.Unmarshal(b, &tagsResponse); err != nil {
-			return nil, err
-		}
-
-		return tagsResponse.Tags, nil
-	}
-	return nil, handleErrorResponse(resp)
-}
-
-func (ms *manifests) Exists(dgst digest.Digest) (bool, error) {
+func (ms *manifests) Exists(ctx context.Context, dgst digest.Digest) (bool, error) {
 	// Call by Tag endpoint since the API uses the same
 	// URL endpoint for tags and digests.
-	return ms.ExistsByTag(dgst.String())
-}
-
-func (ms *manifests) ExistsByTag(tag string) (bool, error) {
-	u, err := ms.ub.BuildManifestURL(ms.name, tag)
+	u, err := ms.ub.BuildManifestURL(ms.name, dgst.String())
 	if err != nil {
 		return false, err
 	}
@@ -241,46 +325,63 @@ func (ms *manifests) ExistsByTag(tag string) (bool, error) {
 	return false, handleErrorResponse(resp)
 }
 
-func (ms *manifests) Get(dgst digest.Digest) (*schema1.SignedManifest, error) {
-	// Call by Tag endpoint since the API uses the same
-	// URL endpoint for tags and digests.
-	return ms.GetByTag(dgst.String())
-}
-
-// AddEtagToTag allows a client to supply an eTag to GetByTag which will be
+// AddEtagToTag allows a client to supply an eTag to Get which will be
 // used for a conditional HTTP request.  If the eTag matches, a nil manifest
-// and nil error will be returned. etag is automatically quoted when added to
-// this map.
+// and ErrManifestNotModified error will be returned. etag is automatically
+// quoted when added to this map.
 func AddEtagToTag(tag, etag string) distribution.ManifestServiceOption {
-	return func(ms distribution.ManifestService) error {
-		if ms, ok := ms.(*manifests); ok {
-			ms.etags[tag] = fmt.Sprintf(`"%s"`, etag)
-			return nil
-		}
-		return fmt.Errorf("etag options is a client-only option")
-	}
+	return etagOption{tag, etag}
 }
 
-func (ms *manifests) GetByTag(tag string, options ...distribution.ManifestServiceOption) (*schema1.SignedManifest, error) {
+type etagOption struct{ tag, etag string }
+
+func (o etagOption) Apply(ms distribution.ManifestService) error {
+	if ms, ok := ms.(*manifests); ok {
+		ms.etags[o.tag] = fmt.Sprintf(`"%s"`, o.etag)
+		return nil
+	}
+	return fmt.Errorf("etag options is a client-only option")
+}
+
+func (ms *manifests) Get(ctx context.Context, dgst digest.Digest, options ...distribution.ManifestServiceOption) (distribution.Manifest, error) {
+
+	var tag string
 	for _, option := range options {
-		err := option(ms)
-		if err != nil {
-			return nil, err
+		if opt, ok := option.(withTagOption); ok {
+			tag = opt.tag
+		} else {
+			err := option.Apply(ms)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	u, err := ms.ub.BuildManifestURL(ms.name, tag)
+	var ref string
+	if tag != "" {
+		ref = tag
+	} else {
+		ref = dgst.String()
+	}
+
+	u, err := ms.ub.BuildManifestURL(ms.name, ref)
 	if err != nil {
 		return nil, err
 	}
+
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, ok := ms.etags[tag]; ok {
-		req.Header.Set("If-None-Match", ms.etags[tag])
+	for _, t := range distribution.ManifestMediaTypes() {
+		req.Header.Add("Accept", t)
 	}
+
+	if _, ok := ms.etags[ref]; ok {
+		req.Header.Set("If-None-Match", ms.etags[ref])
+	}
+
 	resp, err := ms.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -289,44 +390,89 @@ func (ms *manifests) GetByTag(tag string, options ...distribution.ManifestServic
 	if resp.StatusCode == http.StatusNotModified {
 		return nil, distribution.ErrManifestNotModified
 	} else if SuccessStatus(resp.StatusCode) {
-		var sm schema1.SignedManifest
-		decoder := json.NewDecoder(resp.Body)
+		mt := resp.Header.Get("Content-Type")
+		body, err := ioutil.ReadAll(resp.Body)
 
-		if err := decoder.Decode(&sm); err != nil {
+		if err != nil {
 			return nil, err
 		}
-		return &sm, nil
+		m, _, err := distribution.UnmarshalManifest(mt, body)
+		if err != nil {
+			return nil, err
+		}
+		return m, nil
 	}
 	return nil, handleErrorResponse(resp)
 }
 
-func (ms *manifests) Put(m *schema1.SignedManifest) error {
-	manifestURL, err := ms.ub.BuildManifestURL(ms.name, m.Tag)
-	if err != nil {
-		return err
+// WithTag allows a tag to be passed into Put which enables the client
+// to build a correct URL.
+func WithTag(tag string) distribution.ManifestServiceOption {
+	return withTagOption{tag}
+}
+
+type withTagOption struct{ tag string }
+
+func (o withTagOption) Apply(m distribution.ManifestService) error {
+	if _, ok := m.(*manifests); ok {
+		return nil
+	}
+	return fmt.Errorf("withTagOption is a client-only option")
+}
+
+// Put puts a manifest.  A tag can be specified using an options parameter which uses some shared state to hold the
+// tag name in order to build the correct upload URL.  This state is written and read under a lock.
+func (ms *manifests) Put(ctx context.Context, m distribution.Manifest, options ...distribution.ManifestServiceOption) (digest.Digest, error) {
+	var tag string
+
+	for _, option := range options {
+		if opt, ok := option.(withTagOption); ok {
+			tag = opt.tag
+		} else {
+			err := option.Apply(ms)
+			if err != nil {
+				return "", err
+			}
+		}
 	}
 
-	// todo(richardscothern): do something with options here when they become applicable
-
-	putRequest, err := http.NewRequest("PUT", manifestURL, bytes.NewReader(m.Raw))
+	manifestURL, err := ms.ub.BuildManifestURL(ms.name, tag)
 	if err != nil {
-		return err
+		return "", err
 	}
+
+	mediaType, p, err := m.Payload()
+	if err != nil {
+		return "", err
+	}
+
+	putRequest, err := http.NewRequest("PUT", manifestURL, bytes.NewReader(p))
+	if err != nil {
+		return "", err
+	}
+
+	putRequest.Header.Set("Content-Type", mediaType)
 
 	resp, err := ms.client.Do(putRequest)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if SuccessStatus(resp.StatusCode) {
-		// TODO(dmcgowan): make use of digest header
-		return nil
+		dgstHeader := resp.Header.Get("Docker-Content-Digest")
+		dgst, err := digest.ParseDigest(dgstHeader)
+		if err != nil {
+			return "", err
+		}
+
+		return dgst, nil
 	}
-	return handleErrorResponse(resp)
+
+	return "", handleErrorResponse(resp)
 }
 
-func (ms *manifests) Delete(dgst digest.Digest) error {
+func (ms *manifests) Delete(ctx context.Context, dgst digest.Digest) error {
 	u, err := ms.ub.BuildManifestURL(ms.name, dgst.String())
 	if err != nil {
 		return err
@@ -346,6 +492,10 @@ func (ms *manifests) Delete(dgst digest.Digest) error {
 		return nil
 	}
 	return handleErrorResponse(resp)
+}
+
+func (ms *manifests) Enumerate(ctx context.Context, manifests []distribution.Manifest, last distribution.Manifest) (n int, err error) {
+	panic("not supported")
 }
 
 type blobs struct {

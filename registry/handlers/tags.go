@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/docker/distribution"
@@ -34,21 +35,34 @@ type tagsAPIResponse struct {
 // GetTags returns a json list of tags for a specific image name.
 func (th *tagsHandler) GetTags(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	manifests, err := th.Repository.Manifests(th)
-	if err != nil {
-		th.Errors = append(th.Errors, err)
-		return
-	}
 
-	tags, err := manifests.Tags()
-	if err != nil {
-		switch err := err.(type) {
-		case distribution.ErrRepositoryUnknown:
-			th.Errors = append(th.Errors, v2.ErrorCodeNameUnknown.WithDetail(map[string]string{"name": th.Repository.Name()}))
+	tagService := th.Repository.Tags(th)
+
+	var allTags []string
+	var tagCount int
+	last := ""
+	var done bool
+	for !done {
+		tags := make([]string, 64)
+		tc, err := tagService.Enumerate(th, tags, last)
+		tagCount += tc
+		switch err {
+		case nil:
+			allTags = append(allTags, tags...)
+			last = allTags[tagCount-1]
+			continue
+		case io.EOF:
+			allTags = append(allTags, tags...)
+			done = true
 		default:
-			th.Errors = append(th.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+			switch err.(type) {
+			case distribution.ErrRepositoryUnknown:
+				th.Errors = append(th.Errors, v2.ErrorCodeNameUnknown.WithDetail(map[string]string{"name": th.Repository.Name()}))
+			default:
+				th.Errors = append(th.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+			}
+			return
 		}
-		return
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -56,7 +70,7 @@ func (th *tagsHandler) GetTags(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(tagsAPIResponse{
 		Name: th.Repository.Name(),
-		Tags: tags,
+		Tags: allTags[0:tagCount],
 	}); err != nil {
 		th.Errors = append(th.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
 		return

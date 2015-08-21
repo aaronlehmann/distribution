@@ -47,7 +47,6 @@ func newRandomBlob(size int) (digest.Digest, []byte) {
 }
 
 func addTestFetch(repo string, dgst digest.Digest, content []byte, m *testutil.RequestResponseMap) {
-
 	*m = append(*m, testutil.RequestResponseMapping{
 		Request: testutil.Request{
 			Method: "GET",
@@ -504,17 +503,12 @@ func newRandomSchemaV1Manifest(name, tag string, blobCount int) (*schema1.Signed
 		panic(err)
 	}
 
-	p, err := sm.Payload()
+	dgst, err := digest.FromBytes(sm.Canonical)
 	if err != nil {
 		panic(err)
 	}
 
-	dgst, err := digest.FromBytes(p)
-	if err != nil {
-		panic(err)
-	}
-
-	return sm, dgst, p
+	return sm, dgst, sm.Canonical
 }
 
 func addTestManifestWithEtag(repo, reference string, content []byte, m *testutil.RequestResponseMap, dgst string) {
@@ -535,6 +529,7 @@ func addTestManifestWithEtag(repo, reference string, content []byte, m *testutil
 			Headers: http.Header(map[string][]string{
 				"Content-Length": {"0"},
 				"Last-Modified":  {time.Now().Add(-1 * time.Second).Format(time.ANSIC)},
+				"Content-Type":   {schema1.MediaTypeManifest},
 			}),
 		}
 	} else {
@@ -544,6 +539,7 @@ func addTestManifestWithEtag(repo, reference string, content []byte, m *testutil
 			Headers: http.Header(map[string][]string{
 				"Content-Length": {fmt.Sprint(len(content))},
 				"Last-Modified":  {time.Now().Add(-1 * time.Second).Format(time.ANSIC)},
+				"Content-Type":   {schema1.MediaTypeManifest},
 			}),
 		}
 
@@ -563,6 +559,7 @@ func addTestManifest(repo, reference string, content []byte, m *testutil.Request
 			Headers: http.Header(map[string][]string{
 				"Content-Length": {fmt.Sprint(len(content))},
 				"Last-Modified":  {time.Now().Add(-1 * time.Second).Format(time.ANSIC)},
+				"Content-Type":   {schema1.MediaTypeManifest},
 			}),
 		},
 	})
@@ -576,6 +573,7 @@ func addTestManifest(repo, reference string, content []byte, m *testutil.Request
 			Headers: http.Header(map[string][]string{
 				"Content-Length": {fmt.Sprint(len(content))},
 				"Last-Modified":  {time.Now().Add(-1 * time.Second).Format(time.ANSIC)},
+				"Content-Type":   {schema1.MediaTypeManifest},
 			}),
 		},
 	})
@@ -608,12 +606,17 @@ func checkEqualManifest(m1, m2 *schema1.SignedManifest) error {
 	return nil
 }
 
-func TestManifestFetch(t *testing.T) {
+func TestV1ManifestFetch(t *testing.T) {
 	ctx := context.Background()
 	repo := "test.example.com/repo"
 	m1, dgst, _ := newRandomSchemaV1Manifest(repo, "latest", 6)
 	var m testutil.RequestResponseMap
-	addTestManifest(repo, dgst.String(), m1.Raw, &m)
+	_, pl, err := m1.Payload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addTestManifest(repo, dgst.String(), pl, &m)
+	addTestManifest(repo, "latest", pl, &m)
 
 	e, c := testServer(m)
 	defer c()
@@ -627,7 +630,7 @@ func TestManifestFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := ms.Exists(dgst)
+	ok, err := ms.Exists(ctx, dgst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,11 +638,29 @@ func TestManifestFetch(t *testing.T) {
 		t.Fatal("Manifest does not exist")
 	}
 
-	manifest, err := ms.Get(dgst)
+	manifest, err := ms.Get(ctx, dgst)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := checkEqualManifest(manifest, m1); err != nil {
+	v1manifest, ok := manifest.(*schema1.SignedManifest)
+	if !ok {
+		t.Fatalf("Unexpected manifest type from Get: %T", manifest)
+	}
+
+	if err := checkEqualManifest(v1manifest, m1); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err = ms.Get(ctx, dgst, WithTag("latest"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1manifest, ok = manifest.(*schema1.SignedManifest)
+	if !ok {
+		t.Fatalf("Unexpected manifest type from Get: %T", manifest)
+	}
+
+	if err = checkEqualManifest(v1manifest, m1); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -653,17 +674,22 @@ func TestManifestFetchWithEtag(t *testing.T) {
 	e, c := testServer(m)
 	defer c()
 
-	r, err := NewRepository(context.Background(), repo, e, nil)
+	ctx := context.Background()
+	r, err := NewRepository(ctx, repo, e, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+
 	ms, err := r.Manifests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = ms.GetByTag("latest", AddEtagToTag("latest", d1.String()))
+	clientManifestService, ok := ms.(*manifests)
+	if !ok {
+		panic("wrong type for client manifest service")
+	}
+	_, err = clientManifestService.Get(ctx, d1, WithTag("latest"), AddEtagToTag("latest", d1.String()))
 	if err != distribution.ErrManifestNotModified {
 		t.Fatal(err)
 	}
@@ -700,10 +726,10 @@ func TestManifestDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ms.Delete(dgst1); err != nil {
+	if err := ms.Delete(ctx, dgst1); err != nil {
 		t.Fatal(err)
 	}
-	if err := ms.Delete(dgst2); err == nil {
+	if err := ms.Delete(ctx, dgst2); err == nil {
 		t.Fatal("Expected error deleting unknown manifest")
 	}
 	// TODO(dmcgowan): Check for specific unknown error
@@ -712,12 +738,17 @@ func TestManifestDelete(t *testing.T) {
 func TestManifestPut(t *testing.T) {
 	repo := "test.example.com/repo/delete"
 	m1, dgst, _ := newRandomSchemaV1Manifest(repo, "other", 6)
+
+	_, payload, err := m1.Payload()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var m testutil.RequestResponseMap
 	m = append(m, testutil.RequestResponseMapping{
 		Request: testutil.Request{
 			Method: "PUT",
 			Route:  "/v2/" + repo + "/manifests/other",
-			Body:   m1.Raw,
+			Body:   payload,
 		},
 		Response: testutil.Response{
 			StatusCode: http.StatusAccepted,
@@ -741,7 +772,7 @@ func TestManifestPut(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ms.Put(m1); err != nil {
+	if _, err := ms.Put(ctx, m1, WithTag(m1.Tag)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -761,21 +792,22 @@ func TestManifestTags(t *testing.T) {
 }
 	`))
 	var m testutil.RequestResponseMap
-	m = append(m, testutil.RequestResponseMapping{
-		Request: testutil.Request{
-			Method: "GET",
-			Route:  "/v2/" + repo + "/tags/list",
-		},
-		Response: testutil.Response{
-			StatusCode: http.StatusOK,
-			Body:       tagsList,
-			Headers: http.Header(map[string][]string{
-				"Content-Length": {fmt.Sprint(len(tagsList))},
-				"Last-Modified":  {time.Now().Add(-1 * time.Second).Format(time.ANSIC)},
-			}),
-		},
-	})
-
+	for i := 0; i < 3; i++ {
+		m = append(m, testutil.RequestResponseMapping{
+			Request: testutil.Request{
+				Method: "GET",
+				Route:  "/v2/" + repo + "/tags/list",
+			},
+			Response: testutil.Response{
+				StatusCode: http.StatusOK,
+				Body:       tagsList,
+				Headers: http.Header(map[string][]string{
+					"Content-Length": {fmt.Sprint(len(tagsList))},
+					"Last-Modified":  {time.Now().Add(-1 * time.Second).Format(time.ANSIC)},
+				}),
+			},
+		})
+	}
 	e, c := testServer(m)
 	defer c()
 
@@ -784,21 +816,45 @@ func TestManifestTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	ms, err := r.Manifests(ctx)
+
+	tagService := r.Tags(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	tags, err := ms.Tags()
-	if err != nil {
-		t.Fatal(err)
+	// The tags endpoint returns all tags, but there is no way of knowing ahead of time
+	// how many are expected.  The API doesn't returning a variable length slice, so just
+	// keep doubling the expected until it's large enough to get all tags.
+	tags := make([]string, 1)
+	done := false
+	var n int
+	for !done {
+		n, err = tagService.Enumerate(ctx, tags, "")
+		switch err {
+		case nil:
+			tags = make([]string, len(tags)*2+1)
+		case io.EOF:
+			done = true
+			break
+		default:
+			t.Fatalf("Unexpected error enumerating tags: %s", err)
+		}
 	}
-
-	if len(tags) != 3 {
+	if n != 3 {
 		t.Fatalf("Wrong number of tags returned: %d, expected 3", len(tags))
 	}
-	// TODO(dmcgowan): Check array
 
+	expected := map[string]struct{}{
+		"tag1":   {},
+		"tag2":   {},
+		"funtag": {},
+	}
+	for _, t := range tags {
+		delete(expected, t)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("unexpected tags returned: %v", expected)
+	}
 	// TODO(dmcgowan): Check for error cases
 }
 
@@ -831,7 +887,7 @@ func TestManifestUnauthorized(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = ms.Get(dgst)
+	_, err = ms.Get(ctx, dgst)
 	if err == nil {
 		t.Fatal("Expected error fetching manifest")
 	}
