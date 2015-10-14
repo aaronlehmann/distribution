@@ -42,7 +42,7 @@ image manifest based on the Content-Type returned in the HTTP response.
 
     The manifests field contains a list of manifests for specific platforms.
 
-    Fields of a onject in the manifests list are:
+    Fields of a object in the manifests list are:
     
     - **`mediaType`** *string*
     
