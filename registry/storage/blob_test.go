@@ -12,6 +12,7 @@ import (
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/context"
 	"github.com/docker/distribution/digest"
+	"github.com/docker/distribution/reference"
 	"github.com/docker/distribution/registry/storage/cache/memory"
 	"github.com/docker/distribution/registry/storage/driver/inmemory"
 	"github.com/docker/distribution/testutil"
@@ -26,7 +27,7 @@ func TestSimpleBlobUpload(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	imageName := "foo/bar"
+	imageName, _ := reference.ParseNamed("foo/bar")
 	driver := inmemory.New()
 	registry, err := NewRegistry(ctx, driver, BlobDescriptorCacheProvider(memory.NewInMemoryBlobDescriptorCacheProvider()), EnableDelete, EnableRedirect)
 	if err != nil {
@@ -211,7 +212,7 @@ func TestSimpleBlobUpload(t *testing.T) {
 // other tests.
 func TestSimpleBlobRead(t *testing.T) {
 	ctx := context.Background()
-	imageName := "foo/bar"
+	imageName, _ := reference.ParseNamed("foo/bar")
 	driver := inmemory.New()
 	registry, err := NewRegistry(ctx, driver, BlobDescriptorCacheProvider(memory.NewInMemoryBlobDescriptorCacheProvider()), EnableDelete, EnableRedirect)
 	if err != nil {
@@ -316,7 +317,7 @@ func TestSimpleBlobRead(t *testing.T) {
 // TestLayerUploadZeroLength uploads zero-length
 func TestLayerUploadZeroLength(t *testing.T) {
 	ctx := context.Background()
-	imageName := "foo/bar"
+	imageName, _ := reference.ParseNamed("foo/bar")
 	driver := inmemory.New()
 	registry, err := NewRegistry(ctx, driver, BlobDescriptorCacheProvider(memory.NewInMemoryBlobDescriptorCacheProvider()), EnableDelete, EnableRedirect)
 	if err != nil {

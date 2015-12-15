@@ -72,7 +72,7 @@ func CreateRandomTarFile() (rs io.ReadSeeker, dgst digest.Digest, err error) {
 		return nil, "", err
 	}
 
-	dgst = digest.FromBytes(target.Bytes())
+	dgst, _ = digest.FromBytes(target.Bytes())
 
 	return bytes.NewReader(target.Bytes()), dgst, nil
 }

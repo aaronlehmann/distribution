@@ -15,6 +15,7 @@ import (
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/context"
 	"github.com/docker/distribution/digest"
+	"github.com/docker/distribution/reference"
 	"github.com/docker/distribution/registry/api/v2"
 	"github.com/docker/distribution/registry/client/transport"
 	"github.com/docker/distribution/registry/storage/cache"
@@ -97,7 +98,7 @@ func (r *registry) Repositories(ctx context.Context, entries []string, last stri
 }
 
 // NewRepository creates a new Repository for the given repository name and base URL.
-func NewRepository(ctx context.Context, name, baseURL string, transport http.RoundTripper) (distribution.Repository, error) {
+func NewRepository(ctx context.Context, name reference.Named, baseURL string, transport http.RoundTripper) (distribution.Repository, error) {
 	ub, err := v2.NewURLBuilderFromString(baseURL)
 	if err != nil {
 		return nil, err
@@ -120,21 +121,21 @@ type repository struct {
 	client  *http.Client
 	ub      *v2.URLBuilder
 	context context.Context
-	name    string
+	name    reference.Named
 }
 
-func (r *repository) Name() string {
+func (r *repository) Name() reference.Named {
 	return r.name
 }
 
 func (r *repository) Blobs(ctx context.Context) distribution.BlobStore {
 	statter := &blobStatter{
-		name:   r.Name(),
+		name:   r.name,
 		ub:     r.ub,
 		client: r.client,
 	}
 	return &blobs{
-		name:    r.Name(),
+		name:    r.name,
 		ub:      r.ub,
 		client:  r.client,
 		statter: cache.NewCachedBlobStatter(memory.NewInMemoryBlobDescriptorCacheProvider(), statter),
@@ -144,7 +145,7 @@ func (r *repository) Blobs(ctx context.Context) distribution.BlobStore {
 func (r *repository) Manifests(ctx context.Context, options ...distribution.ManifestServiceOption) (distribution.ManifestService, error) {
 	// todo(richardscothern): options should be sent over the wire
 	return &manifests{
-		name:   r.Name(),
+		name:   r.name,
 		ub:     r.ub,
 		client: r.client,
 		etags:  make(map[string]string),
@@ -172,7 +173,7 @@ type tags struct {
 	client  *http.Client
 	ub      *v2.URLBuilder
 	context context.Context
-	name    string
+	name    reference.Named
 }
 
 func (t *tags) Enumerate(ctx context.Context, refs []string, last string) (n int, err error) {
@@ -298,7 +299,7 @@ func (s *signatures) Put(dgst digest.Digest, signatures ...[]byte) error {
 }
 
 type manifests struct {
-	name   string
+	name   reference.Named
 	ub     *v2.URLBuilder
 	client *http.Client
 	etags  map[string]string
@@ -499,7 +500,7 @@ func (ms *manifests) Enumerate(ctx context.Context, manifests []distribution.Man
 }
 
 type blobs struct {
-	name   string
+	name   reference.Named
 	ub     *v2.URLBuilder
 	client *http.Client
 
@@ -619,7 +620,7 @@ func (bs *blobs) Delete(ctx context.Context, dgst digest.Digest) error {
 }
 
 type blobStatter struct {
-	name   string
+	name   reference.Named
 	ub     *v2.URLBuilder
 	client *http.Client
 }

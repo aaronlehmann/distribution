@@ -31,7 +31,7 @@ func (ts *tagStore) Enumerate(ctx context.Context, tags []string, last string) (
 	}
 
 	pathSpec, err := pathFor(manifestTagPathSpec{
-		name: ts.repository.Name(),
+		name: ts.repository.Name().String(),
 	})
 	if err != nil {
 		return 0, err
@@ -41,7 +41,7 @@ func (ts *tagStore) Enumerate(ctx context.Context, tags []string, last string) (
 	if err != nil {
 		switch err := err.(type) {
 		case storagedriver.PathNotFoundError:
-			return 0, distribution.ErrRepositoryUnknown{Name: ts.repository.Name()}
+			return 0, distribution.ErrRepositoryUnknown{Name: ts.repository.Name().String()}
 		default:
 			return 0, err
 		}
@@ -68,7 +68,7 @@ func (ts *tagStore) Enumerate(ctx context.Context, tags []string, last string) (
 // exists returns true if the specified manifest tag exists in the repository.
 func (ts *tagStore) exists(ctx context.Context, tag string) (bool, error) {
 	tagPath, err := pathFor(manifestTagCurrentPathSpec{
-		name: ts.repository.Name(),
+		name: ts.repository.Name().String(),
 		tag:  tag,
 	})
 
@@ -88,7 +88,7 @@ func (ts *tagStore) exists(ctx context.Context, tag string) (bool, error) {
 // the current tag. The digest must point to a manifest.
 func (ts *tagStore) Tag(ctx context.Context, tag string, desc distribution.Descriptor) error {
 	currentPath, err := pathFor(manifestTagCurrentPathSpec{
-		name: ts.repository.Name(),
+		name: ts.repository.Name().String(),
 		tag:  tag,
 	})
 
@@ -110,7 +110,7 @@ func (ts *tagStore) Tag(ctx context.Context, tag string, desc distribution.Descr
 // resolve the current revision for name and tag.
 func (ts *tagStore) Get(ctx context.Context, tag string) (distribution.Descriptor, error) {
 	currentPath, err := pathFor(manifestTagCurrentPathSpec{
-		name: ts.repository.Name(),
+		name: ts.repository.Name().String(),
 		tag:  tag,
 	})
 
@@ -135,7 +135,7 @@ func (ts *tagStore) Get(ctx context.Context, tag string) (distribution.Descripto
 // revisions that have the specified tag.
 func (ts *tagStore) Untag(ctx context.Context, tag string) error {
 	tagPath, err := pathFor(manifestTagPathSpec{
-		name: ts.repository.Name(),
+		name: ts.repository.Name().String(),
 		tag:  tag,
 	})
 

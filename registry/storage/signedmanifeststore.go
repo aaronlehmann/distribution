@@ -45,7 +45,7 @@ func (ms *manifestStore) Get(ctx context.Context, dgst digest.Digest, options ..
 	if err != nil {
 		if err == distribution.ErrBlobUnknown {
 			return nil, distribution.ErrManifestUnknownRevision{
-				Name:     ms.repository.Name(),
+				Name:     ms.repository.Name().String(),
 				Revision: dgst,
 			}
 		}
@@ -60,7 +60,7 @@ func (ms *manifestStore) Get(ctx context.Context, dgst digest.Digest, options ..
 	if err != nil {
 		if err == distribution.ErrBlobUnknown {
 			return nil, distribution.ErrManifestUnknownRevision{
-				Name:     ms.repository.Name(),
+				Name:     ms.repository.Name().String(),
 				Revision: dgst,
 			}
 		}
