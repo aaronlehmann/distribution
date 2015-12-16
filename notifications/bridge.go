@@ -23,8 +23,8 @@ var _ Listener = &bridge{}
 
 // URLBuilder defines a subset of url builder to be used by the event listener.
 type URLBuilder interface {
-	BuildManifestURL(name reference.Named, tag string) (string, error)
-	BuildBlobURL(name reference.Named, dgst digest.Digest) (string, error)
+	BuildManifestURL(name reference.Named) (string, error)
+	BuildBlobURL(name reference.Canonical) (string, error)
 }
 
 // NewBridge returns a notification listener that writes records to sink,
@@ -103,7 +103,12 @@ func (b *bridge) createManifestEvent(action string, repo reference.Named, sm dis
 		return nil, err
 	}
 
-	event.Target.URL, err = b.ub.BuildManifestURL(repo, event.Target.Digest.String())
+	ref, err := reference.WithDigest(repo, event.Target.Digest)
+	if err != nil {
+		return nil, err
+	}
+
+	event.Target.URL, err = b.ub.BuildManifestURL(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -126,8 +131,12 @@ func (b *bridge) createBlobEvent(action string, repo reference.Named, desc distr
 	event.Target.Length = desc.Size
 	event.Target.Repository = repo.String()
 
-	var err error
-	event.Target.URL, err = b.ub.BuildBlobURL(repo, desc.Digest)
+	ref, err := reference.WithDigest(repo, desc.Digest)
+	if err != nil {
+		return nil, err
+	}
+
+	event.Target.URL, err = b.ub.BuildBlobURL(ref)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/docker/distribution"
 	ctxu "github.com/docker/distribution/context"
 	"github.com/docker/distribution/digest"
+	"github.com/docker/distribution/reference"
 	"github.com/docker/distribution/registry/api/errcode"
 	"github.com/docker/distribution/registry/api/v2"
 	"github.com/gorilla/handlers"
@@ -185,7 +186,13 @@ func (imh *imageManifestHandler) PutImageManifest(w http.ResponseWriter, r *http
 	}
 
 	// Construct a canonical url for the uploaded manifest.
-	location, err := imh.urlBuilder.BuildManifestURL(imh.Repository.Name(), imh.Digest.String())
+	ref, err := reference.WithDigest(imh.Repository.Name(), imh.Digest)
+	if err != nil {
+		imh.Errors = append(imh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+
+	location, err := imh.urlBuilder.BuildManifestURL(ref)
 	if err != nil {
 		// NOTE(stevvooe): Given the behavior above, this absurdly unlikely to
 		// happen. We'll log the error here but proceed as if it worked. Worst

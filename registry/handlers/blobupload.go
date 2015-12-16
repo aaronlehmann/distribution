@@ -9,6 +9,7 @@ import (
 	"github.com/docker/distribution"
 	ctxu "github.com/docker/distribution/context"
 	"github.com/docker/distribution/digest"
+	"github.com/docker/distribution/reference"
 	"github.com/docker/distribution/registry/api/errcode"
 	"github.com/docker/distribution/registry/api/v2"
 	"github.com/gorilla/handlers"
@@ -256,7 +257,12 @@ func (buh *blobUploadHandler) PutBlobUploadComplete(w http.ResponseWriter, r *ht
 	}
 
 	// Build our canonical blob url
-	blobURL, err := buh.urlBuilder.BuildBlobURL(buh.Repository.Name(), desc.Digest)
+	ref, err := reference.WithDigest(buh.Repository.Name(), desc.Digest)
+	if err != nil {
+		buh.Errors = append(buh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+	blobURL, err := buh.urlBuilder.BuildBlobURL(ref)
 	if err != nil {
 		buh.Errors = append(buh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
 		return
